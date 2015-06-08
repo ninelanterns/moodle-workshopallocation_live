@@ -124,14 +124,10 @@ class workshop_live_allocator implements workshop_allocator {
     }
 }
 
-function workshopallocation_live_assessable_content_uploaded($event) {
+function workshopallocation_live_assessable_uploaded($event) {
     global $DB;
 
-    if ($event->modulename !== 'workshop') {
-        return true;
-    }
-
-    $cm = get_coursemodule_from_id('workshop', $event->cmid, 0, false, MUST_EXIST);
+    $cm = get_coursemodule_from_id('workshop', $event->contextinstanceid, 0, false, MUST_EXIST);
     $course = $DB->get_record('course', array('id' => $cm->course), '*', MUST_EXIST);
     $instance = $DB->get_record('workshop', array('id' => $cm->instance), '*', MUST_EXIST);
     $workshop = new workshop($instance, $cm, $course);
