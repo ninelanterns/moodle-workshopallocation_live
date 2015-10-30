@@ -41,12 +41,71 @@ class workshop_live_allocator_form extends moodleform {
 
         $plugindefaults = get_config('workshopallocation_random');
 
+        // Check late submissions setting
+        if (!$workshop->latesubmissions) {
+            $settingsurl = new moodle_url('/course/modedit.php', array('update' => $workshop->cm->id, 'return' => 1));
+            $settingslink = html_writer::link($settingsurl, get_string('workshopsettings', 'workshopallocation_live'));
+            $latesubmissions = html_writer::tag('strong', get_string('latesubmissions', 'workshop'));
+            $a = array('latesubmissions' => $latesubmissions, 'workshopsettings' => $settingslink);
+            $message = get_string('latesubmissionsdisabled', 'workshopallocation_live', $a);
+            $mform->addElement('html', html_writer::tag('p', $message));
+            return;
+        }
+
         $strenbaled = get_string('enabled', 'workshopallocation_live');
         $cm = get_coursemodule_from_instance('workshop', $workshop->id, 0, false, MUST_EXIST);
         $url = new moodle_url($PAGE->url, array('method' => 'scheduled', 'cmid' => $cm->id));
         $strenabledinfo = get_string('enabledinfo', 'workshopallocation_live', $url->out());
-
         $mform->addElement('checkbox', 'enabled', $strenbaled, $strenabledinfo);
+
+        // Number of reviews
+        $group = array();
+        $options = workshop_random_allocator::available_numofreviews_list();
+        $group[] = $mform->createElement('select', 'numofreviews', '', $options);
+        $mform->setDefault('numofreviews', $plugindefaults->numofreviews);
+        $options = array(
+            workshop_random_allocator_setting::NUMPER_SUBMISSION => get_string('numperauthor', 'workshopallocation_random'),
+            workshop_random_allocator_setting::NUMPER_REVIEWER   => get_string('numperreviewer', 'workshopallocation_random')
+        );
+        $group[] = $mform->createElement('select', 'numper', '', $options);
+        $mform->setDefault('numper', workshop_random_allocator_setting::NUMPER_SUBMISSION);
+        $label = get_string('numofreviews', 'workshopallocation_random');
+        $mform->addGroup($group, 'groupnumofreviews', $label,  array(' '), false);
+
+        // Group mode
+        $groupmode = groups_get_activity_groupmode($workshop->cm, $workshop->course);
+        switch ($groupmode) {
+        case NOGROUPS:
+            $grouplabel = get_string('groupsnone', 'group');
+            break;
+        case VISIBLEGROUPS:
+            $grouplabel = get_string('groupsvisible', 'group');
+            break;
+        case SEPARATEGROUPS:
+            $grouplabel = get_string('groupsseparate', 'group');
+            break;
+        }
+
+        // Exclude same group
+        $mform->addElement('static', 'groupmode', get_string('groupmode', 'group'), $grouplabel);
+        if (VISIBLEGROUPS == $groupmode) {
+            $label = get_string('excludesamegroup', 'workshopallocation_random');
+            $mform->addElement('checkbox', 'excludesamegroup', $label);
+            $mform->setDefault('excludesamegroup', 0);
+        } else {
+            $mform->addElement('hidden', 'excludesamegroup', 0);
+            $mform->setType('excludesamegroup', PARAM_BOOL);
+        }
+
+        // Self assessment
+        if (empty($workshop->useselfassessment)) {
+            $label = get_string('addselfassessment', 'workshopallocation_random');
+            $content = get_string('selfassessmentdisabled', 'workshop');
+            $mform->addElement('static', 'addselfassessment', $label, $content);
+        } else {
+            $label = get_string('addselfassessment', 'workshopallocation_random');
+            $mform->addElement('checkbox', 'addselfassessment', $label);
+        }
 
         $this->add_action_buttons();
     }
@@ -69,12 +128,13 @@ class workshop_live_allocator implements workshop_allocator {
         $customdata = array();
         $customdata['workshop'] = $this->workshop;
 
-        $settings = $DB->get_record('workshopallocation_live',
-                                    array('workshopid' => $this->workshop->id));
-        if (!$settings) {
-            $settings = new stdClass;
-            $settings->workshopid = $this->workshop->id;
-            $settings->enabled = false;
+
+        $record = $DB->get_record('workshopallocation_live', array('workshopid' => $this->workshop->id));
+        if (!$record) {
+            $record = new stdClass;
+            $record->workshopid = $this->workshop->id;
+            $record->enabled = false;
+            $record->settings = '{}';
         }
 
         $this->mform = new workshop_live_allocator_form($PAGE->url, $customdata);
@@ -82,20 +142,28 @@ class workshop_live_allocator implements workshop_allocator {
         if ($this->mform->is_cancelled()) {
             redirect($this->workshop->view_url());
         } else if ($data = $this->mform->get_data()) {
-            $settings->enabled = !empty($data->enabled);
-            if (isset($settings->id)) {
-                $DB->update_record('workshopallocation_live', $settings);
+            $record->enabled = !empty($data->enabled);
+            $record->settings = json_encode(array(
+                'numofreviews' => $data->numofreviews,
+                'numper' => $data->numper,
+                'excludesamegroup' => !empty($data->excludesamegroup),
+                'addselfassessment' => !empty($data->addselfassessment),
+            ));
+            if (isset($record->id)) {
+                $DB->update_record('workshopallocation_live', $record);
             } else {
-                $DB->insert_record('workshopallocation_live', $settings);
+                $DB->insert_record('workshopallocation_live', $record);
             }
-            if ($settings->enabled) {
+            if ($record->enabled) {
                 $msg = get_string('resultenabled', 'workshopallocation_live');
             } else {
                 $msg = get_string('resultdisabled', 'workshopallocation_live');
             }
             $result->set_status(workshop_allocation_result::STATUS_CONFIGURED, $msg);
         } else {
-            $this->mform->set_data($settings);
+            $data = json_decode($record->settings) ?: new stdClass;
+            $data->enabled = $record->enabled;
+            $this->mform->set_data($data);
             $result->set_status(workshop_allocation_result::STATUS_VOID);
         }
 
@@ -132,15 +200,11 @@ function workshopallocation_live_assessable_uploaded($event) {
     $instance = $DB->get_record('workshop', array('id' => $cm->instance), '*', MUST_EXIST);
     $workshop = new workshop($instance, $cm, $course);
 
-    $enabled = $DB->get_field('workshopallocation_live', 'enabled',
-                              array('workshopid' => $workshop->id));
+    $record = $DB->get_record('workshopallocation_live', array('workshopid' => $workshop->id));
 
-    $scheduled = $DB->get_record('workshopallocation_scheduled',
-                                 array('workshopid' => $workshop->id));
-
-    if ($workshop->phase == workshop::PHASE_ASSESSMENT and $enabled and $scheduled) {
+    if ($workshop->phase == workshop::PHASE_ASSESSMENT and $record and $record->enabled) {
         $randomallocator = $workshop->allocator_instance('random');
-        $settings = workshop_random_allocator_setting::instance_from_text($scheduled->settings);
+        $settings = workshop_random_allocator_setting::instance_from_text($record->settings);
         $result = new workshop_allocation_result($randomallocator);
         $randomallocator->execute($settings, $result);
     }
