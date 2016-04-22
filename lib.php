@@ -1,5 +1,4 @@
 <?php
-
 // This file is part of Moodle - http://moodle.org/
 //
 // Moodle is free software: you can redistribute it and/or modify
@@ -75,15 +74,15 @@ class workshop_live_allocator_form extends moodleform {
         // Group mode
         $groupmode = groups_get_activity_groupmode($workshop->cm, $workshop->course);
         switch ($groupmode) {
-        case NOGROUPS:
-            $grouplabel = get_string('groupsnone', 'group');
-            break;
-        case VISIBLEGROUPS:
-            $grouplabel = get_string('groupsvisible', 'group');
-            break;
-        case SEPARATEGROUPS:
-            $grouplabel = get_string('groupsseparate', 'group');
-            break;
+            case NOGROUPS:
+                $grouplabel = get_string('groupsnone', 'group');
+                break;
+            case VISIBLEGROUPS:
+                $grouplabel = get_string('groupsvisible', 'group');
+                break;
+            case SEPARATEGROUPS:
+                $grouplabel = get_string('groupsseparate', 'group');
+                break;
         }
 
         // Exclude same group
@@ -127,7 +126,6 @@ class workshop_live_allocator implements workshop_allocator {
 
         $customdata = array();
         $customdata['workshop'] = $this->workshop;
-
 
         $record = $DB->get_record('workshopallocation_live', array('workshopid' => $this->workshop->id));
         if (!$record) {
